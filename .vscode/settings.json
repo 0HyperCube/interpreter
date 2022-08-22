@@ -1,0 +1,12 @@
+{
+	// Rust: save on format
+	"[rust]": {
+		"editor.formatOnSave": true,
+		"editor.formatOnPaste": true,
+		"editor.defaultFormatter": "rust-lang.rust-analyzer",
+	},
+	
+	// VS Code config
+	"files.eol": "\n",
+	"files.insertFinalNewline": true,
+}
