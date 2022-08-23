@@ -1,3 +1,5 @@
+use std::fmt::Arguments;
+
 use crate::bytecode::prelude::*;
 
 /// The interpeter's runtime, containing the current [Chunk], a pointer to the next instruction and the stack
@@ -24,9 +26,15 @@ impl<'a> Runtime<'a> {
 		}
 	}
 
+	/// Reset Runtime and load new chunk
 	pub fn reset(&mut self, chunk: &'a Chunk) {
 		self.chunk = chunk;
 		self.ip = chunk.as_ptr();
+		self.reset_stack();
+	}
+
+	/// Clear the stack and reset the stack top
+	pub fn reset_stack(&mut self) {
 		self.stack.clear();
 		self.stack_top = self.stack.as_mut_ptr();
 	}
@@ -79,11 +87,23 @@ impl<'a> Runtime<'a> {
 	}
 	// Pops an item from the top of the stack, returning it
 	#[inline]
-	pub fn pop_stack(&mut self) -> Value {
+	pub fn pop_stack(&mut self) -> &'a Value {
 		unsafe {
 			self.stack_top = self.stack_top.offset(-1);
-			*self.stack_top
+			&*self.stack_top
 		}
+	}
+
+	// Peeks at an item a certain distance from the top of the stack
+	#[inline]
+	pub fn peep_stack(&mut self, distance: isize) -> &'a Value {
+		unsafe { &*self.stack_top.offset(-distance) }
+	}
+
+	pub fn runtime_error(&mut self, args: Arguments) {
+		let line = self.chunk.lines[self.offset()];
+		error!("{} [line {line}] in script", args);
+		self.reset_stack();
 	}
 
 	/// Interprets the [Chunk], matching each opcode instruction.
@@ -98,7 +118,7 @@ impl<'a> Runtime<'a> {
 					trace!(target: "Stack", "");
 					while current != self.stack_top {
 						unsafe {
-							print!("[ {} ]", *current);
+							print!("[ {:?} ]", *current);
 							current = current.offset(1);
 						}
 					}
@@ -112,11 +132,16 @@ impl<'a> Runtime<'a> {
 			let opcode = instruction.into();
 
 			macro_rules! binary_op {
-				($op:tt) => {
+				($op:tt => $resultv:tt) => {
 					{
 						let b = self.pop_stack();
 						let a = self.pop_stack();
-						self.push_stack(a $op b);
+						if let [Value::Number(a), Value::Number(b)] = [a,b]{
+							self.push_stack(Value::$resultv(a $op b));
+						}else{
+							self.runtime_error(format_args!("Operands must be numbers"));
+						}
+
 					}
 				};
 			}
@@ -125,22 +150,44 @@ impl<'a> Runtime<'a> {
 				Opcode::Unknown => warn!("Unknown opcode"),
 
 				Opcode::Constant => {
-					let constant = *self.short_constant();
-					self.push_stack(constant);
+					let constant = self.short_constant();
+					self.push_stack(constant.clone());
 				}
 				Opcode::LongConstant => {
-					let constant = *self.long_constant();
-					self.push_stack(constant);
+					let constant = self.long_constant();
+					self.push_stack(constant.clone());
 				}
 				Opcode::Return => return Ok(()),
 				Opcode::Negate => {
 					let input = self.pop_stack();
-					self.push_stack(-input);
+					if let Value::Number(input) = input {
+						self.push_stack(Value::Number(-input));
+					} else {
+						self.runtime_error(format_args!("Operand must be numbers"))
+					}
 				}
-				Opcode::Add => binary_op!(+),
-				Opcode::Subtract => binary_op!(-),
-				Opcode::Multiply => binary_op!(*),
-				Opcode::Divide => binary_op!(/),
+				Opcode::Add => binary_op!(+ => Number),
+				Opcode::Subtract => binary_op!(- => Number),
+				Opcode::Multiply => binary_op!(* => Number),
+				Opcode::Divide => binary_op!(/ => Number),
+				Opcode::Null => self.push_stack(Value::Null),
+				Opcode::True => self.push_stack(Value::Bool(true)),
+				Opcode::False => self.push_stack(Value::Bool(false)),
+				Opcode::Not => {
+					let input = self.pop_stack();
+					if let Value::Bool(x) = input {
+						self.push_stack(Value::Bool(!x))
+					} else {
+						self.runtime_error(format_args!("Operand must be a boolean"));
+					}
+				}
+				Opcode::Equal => {
+					let b = self.pop_stack();
+					let a = self.pop_stack();
+					self.push_stack(Value::Bool(a == b));
+				}
+				Opcode::Greater => binary_op!(> => Bool),
+				Opcode::Less => binary_op!(< => Bool),
 			}
 		}
 	}

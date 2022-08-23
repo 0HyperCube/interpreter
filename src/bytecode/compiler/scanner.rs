@@ -249,7 +249,7 @@ impl<'a> Scanner<'a> {
 			b'e' => self.check_keyword(1, "lse", TokenType::Else),
 			b't' => self.check_keyword(1, "rue", TokenType::True),
 			b'f' => match self.get_byte(self.start as isize + 1) {
-				b'a' => self.check_keyword(2, "alse", TokenType::False),
+				b'a' => self.check_keyword(2, "lse", TokenType::False),
 				b'o' => self.check_keyword(2, "r", TokenType::For),
 				b'n' => self.check_keyword(2, "", TokenType::Fn),
 				_ => TokenType::Identifier,
@@ -259,6 +259,7 @@ impl<'a> Scanner<'a> {
 			b'n' => self.check_keyword(1, "ull", TokenType::Null),
 			_ => TokenType::Identifier,
 		};
+		info!("Token {:?}", token_type);
 		self.new_token(token_type)
 	}
 	/// Get the byte at the specified position

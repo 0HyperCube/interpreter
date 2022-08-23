@@ -37,6 +37,15 @@ opcode! {
 		5 => Subtract,
 		6 => Multiply,
 		7 => Divide,
+
+		8 => Null,
+		9 => True,
+		10 => False,
+
+		11 => Not,
+		12 => Equal,
+		13 => Greater,
+		14 => Less,
 	}
 }
 

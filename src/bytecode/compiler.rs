@@ -111,7 +111,7 @@ impl<'a> Parser<'a> {
 	/// Parses a number with `str::parse`
 	fn number(&mut self) {
 		if let Some(token) = &self.previous {
-			self.emit_constant(token.contents.parse().unwrap());
+			self.emit_constant(Value::Number(token.contents.parse().unwrap()));
 		}
 	}
 	/// Parses a grouping `(5+5)`
@@ -126,6 +126,7 @@ impl<'a> Parser<'a> {
 			self.parse_precedence(Precedence::Unary);
 			match token_type {
 				TokenType::Minus => self.emit_byte(Opcode::Negate),
+				TokenType::Escamation => self.emit_byte(Opcode::Not),
 				_ => unreachable!(),
 			}
 		}
@@ -141,31 +142,44 @@ impl<'a> Parser<'a> {
 				TokenType::Minus => self.emit_byte(Opcode::Subtract),
 				TokenType::Star => self.emit_byte(Opcode::Multiply),
 				TokenType::Slash => self.emit_byte(Opcode::Divide),
+				TokenType::EqualsEquals => self.emit_byte(Opcode::Equal),
+				TokenType::Greater => self.emit_byte(Opcode::Greater),
+				TokenType::GreaterEqual => self.emit_bytes(Opcode::Less, Opcode::Not),
+				TokenType::Less => self.emit_byte(Opcode::Less),
+				TokenType::LessEqual => self.emit_bytes(Opcode::Greater, Opcode::Not),
 				_ => unreachable!(),
 			}
 		}
 	}
-	/// Runs the specified [`ParseFn`]
-	#[inline]
-	fn parse_fn(&mut self, parse_fn: ParseFn) {
-		match parse_fn {
-			ParseFn::None => self.error_at_previous("Expected expression"),
-			ParseFn::Grouping => self.grouping(),
-			ParseFn::Unary => self.unary(),
-			ParseFn::Binary => self.binary(),
-			ParseFn::Number => self.number(),
+	/// Parses literal like `true`, `false` or `null`
+	fn literal(&mut self) {
+		if let Some(token) = &self.previous {
+			match token.token_type {
+				TokenType::True => self.emit_byte(Opcode::True),
+				TokenType::False => self.emit_byte(Opcode::False),
+				TokenType::Null => self.emit_byte(Opcode::Null),
+				_ => unreachable!("{:?}", token.token_type),
+			}
 		}
 	}
 	/// Parses an expression using a specific [`Precedence`].
 	fn parse_precedence(&mut self, precedence: Precedence) {
 		self.advance();
-		let prefix = self.previous.as_ref().map_or(ParseFn::None, |token| get_rule(token.token_type).prefix);
-		self.parse_fn(prefix);
+		let prefix = self.previous.as_ref().map_or(None, |token| get_rule(token.token_type).prefix);
+		if let Some(prefix) = prefix {
+			prefix(self);
+		} else {
+			self.error_at_previous("Expected expression")
+		}
 
 		while precedence as u8 <= get_rule(self.current.as_ref().unwrap().token_type).precedence as u8 {
 			self.advance();
-			let infix = self.previous.as_ref().map_or(ParseFn::None, |token| get_rule(token.token_type).infix);
-			self.parse_fn(infix);
+			let infix = self.previous.as_ref().map_or(None, |token| get_rule(token.token_type).infix);
+			if let Some(infix) = infix {
+				infix(self);
+			} else {
+				self.error_at_previous("Expected expression")
+			}
 		}
 	}
 	/// Parses with the [`Precedence::Assignment`] precedence

@@ -2,7 +2,22 @@ use core::ops::Index;
 
 use crate::bytecode::prelude::*;
 
-pub type Value = f64;
+#[derive(Clone, PartialEq)]
+pub enum Value {
+	Number(f64),
+	Bool(bool),
+	Null,
+}
+
+impl core::fmt::Debug for Value {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Value::Number(n) => write!(f, "{}", n),
+			Value::Bool(v) => write!(f, "{}", v),
+			Value::Null => write!(f, "null"),
+		}
+	}
+}
 
 /// Contains a seiries of bytecode instructions along with associated constants and [Line] numbers.
 #[derive(Default, Debug)]
