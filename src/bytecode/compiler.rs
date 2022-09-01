@@ -7,17 +7,17 @@ use parse_rules::*;
 use precedence::Precedence;
 
 /// A simple Pratt parser that walks over the source code and output bytecode in a single pass
-pub struct Parser<'a> {
-	scanner: Scanner<'a>,
-	current: Option<Token<'a>>,
-	previous: Option<Token<'a>>,
+pub struct Parser<'a, 'source> {
+	scanner: Scanner<'source>,
+	current: Option<Token<'source>>,
+	previous: Option<Token<'source>>,
 	error: bool,
 	panic: bool,
-	compiling_chunk: &'a mut Chunk,
+	compiling_chunk: &'a mut Chunk<'source>,
 }
-impl<'a> Parser<'a> {
+impl<'a, 'source> Parser<'a, 'source> {
 	/// Construct a new parser from the source and the target chunk
-	fn new(source: &'a str, chunk: &'a mut Chunk) -> Self {
+	fn new(source: &'source str, chunk: &'a mut Chunk<'source>) -> Self {
 		Self {
 			scanner: Scanner::new(source),
 			current: None,
@@ -95,7 +95,7 @@ impl<'a> Parser<'a> {
 		disassemble!(chunk = &self.compiling_chunk, name = "code");
 	}
 	/// Emit a constant at the last token
-	fn emit_constant(&mut self, value: Value) {
+	fn emit_constant(&mut self, value: Value<'source>) {
 		if let Some(token) = &self.previous {
 			self.compiling_chunk.push_constant(value, token.line)
 		}
@@ -106,6 +106,12 @@ impl<'a> Parser<'a> {
 			self.advance();
 		} else {
 			self.error_at_current(message);
+		}
+	}
+	/// Parses a string literal
+	fn string(&mut self) {
+		if let Some(token) = &self.previous {
+			self.emit_constant(Value::StrRef(&token.contents[1..(token.contents.len() - 1)]));
 		}
 	}
 	/// Parses a number with `str::parse`
@@ -188,7 +194,7 @@ impl<'a> Parser<'a> {
 	}
 
 	/// Compiles the source into the specified chunk, returing true if successful
-	pub fn compile(source: &'a str, chunk: &'a mut Chunk) -> bool {
+	pub fn compile(source: &'source str, chunk: &'a mut Chunk<'source>) -> bool {
 		let mut parser = Parser::new(source, chunk);
 		parser.advance();
 		parser.expression();

@@ -1,6 +1,7 @@
 /// Some helpful things that can be used through `use crate::prelude::*;`
 pub(crate) mod prelude {
 	pub use super::compiler::{scanner::*, *};
+	pub use super::heap::*;
 	pub use super::logger::init_logger;
 	pub use super::vm::Runtime;
 	pub use super::{chunk::*, errors::*, line::Line, opcode::*};
@@ -9,6 +10,7 @@ pub(crate) mod prelude {
 mod chunk;
 mod compiler;
 mod errors;
+mod heap;
 mod line;
 mod logger;
 mod opcode;
@@ -18,13 +20,15 @@ use prelude::*;
 
 pub fn interpret(source: &str) -> Result<(), InterpretError> {
 	trace!("Starting bytecode {source}");
+	let chunk = Chunk::new();
+	let mut runtime = Runtime::new(&chunk);
 	let mut chunk = Chunk::new();
 	if !Parser::compile(source, &mut chunk) {
 		trace!("Compile error");
 		return Err(InterpretError::CompileError);
 	}
 	trace!("Starting runtime chunk {:?}", chunk);
-	let mut runtime = Runtime::new(&chunk);
+	runtime.reset(&chunk);
 	runtime.interpret()?;
 	trace!("Runtime ok");
 

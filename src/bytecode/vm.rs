@@ -3,34 +3,38 @@ use std::fmt::Arguments;
 use crate::bytecode::prelude::*;
 
 /// The interpeter's runtime, containing the current [Chunk], a pointer to the next instruction and the stack
-pub struct Runtime<'a> {
+pub struct Runtime<'a, 'source> {
 	/// The [`Chunk`] that is being interpreted
-	chunk: &'a Chunk,
+	chunk: &'a Chunk<'source>,
 	/// The instruction pointer, pointing to the next instruction
 	ip: *const u8,
 	/// The stack of values that can be pushed to and popped from
-	stack: Vec<Value>,
-	/// Pointer to the top of the stack
-	stack_top: *mut Value,
+	stack: Vec<Value<'source>>,
+	/// Pointer to the top of the stack (leading to slightly better performance)
+	stack_top: *mut Value<'source>,
+	/// All the heap objects need to be stored so they can be deleted by garbage collection
+	objects: Vec<Obj>,
 }
 
-impl<'a> Runtime<'a> {
+impl<'a, 'source> Runtime<'a, 'source> {
 	/// Construct a new runtime with the specified [Chunk]
-	pub fn new(chunk: &'a Chunk) -> Self {
+	pub fn new(chunk: &'a Chunk<'source>) -> Self {
 		let mut stack = Vec::with_capacity(5);
 		Self {
-			chunk,
+			chunk: &chunk,
 			ip: chunk.as_ptr(),
 			stack_top: stack.as_mut_ptr(),
 			stack,
+			objects: Vec::new(),
 		}
 	}
 
 	/// Reset Runtime and load new chunk
-	pub fn reset(&mut self, chunk: &'a Chunk) {
+	pub fn reset(&mut self, chunk: &'a Chunk<'source>) {
 		self.chunk = chunk;
 		self.ip = chunk.as_ptr();
 		self.reset_stack();
+		self.free_objects();
 	}
 
 	/// Clear the stack and reset the stack top
@@ -51,13 +55,13 @@ impl<'a> Runtime<'a> {
 
 	/// Read a short constant from the [Chunk].
 	#[inline]
-	pub fn short_constant(&mut self) -> &'a Value {
+	pub fn short_constant(&mut self) -> &'a Value<'source> {
 		self.chunk.constant(self.read_byte() as usize)
 	}
 
 	/// Read a long constant from the [Chunk].
 	#[inline]
-	pub fn long_constant(&mut self) -> &'a Value {
+	pub fn long_constant(&mut self) -> &'a Value<'source> {
 		let mut constant_idx = 0;
 		for i in 0..3 {
 			constant_idx <<= 8;
@@ -74,20 +78,17 @@ impl<'a> Runtime<'a> {
 
 	/// Push an item to the top of the stack
 	#[inline]
-	pub fn push_stack(&mut self, value: Value) {
+	pub fn push_stack(&mut self, value: Value<'source>) {
 		unsafe {
+			// Update stack size
+			self.stack.set_len(self.stack.as_ptr().offset_from(self.stack_top) as usize);
 			*self.stack_top = value;
-
-			// Grow the vec if too small
-			if self.stack.capacity() < self.stack.as_ptr().offset_from(self.stack_top) as usize {
-				self.stack.reserve(1);
-			}
 			self.stack_top = self.stack_top.offset(1);
 		}
 	}
 	// Pops an item from the top of the stack, returning it
 	#[inline]
-	pub fn pop_stack(&mut self) -> &'a Value {
+	pub fn pop_stack(&mut self) -> &'a Value<'source> {
 		unsafe {
 			self.stack_top = self.stack_top.offset(-1);
 			&*self.stack_top
@@ -96,10 +97,17 @@ impl<'a> Runtime<'a> {
 
 	// Peeks at an item a certain distance from the top of the stack
 	#[inline]
-	pub fn peep_stack(&mut self, distance: isize) -> &'a Value {
+	pub fn peep_stack(&mut self, distance: isize) -> &'a Value<'source> {
 		unsafe { &*self.stack_top.offset(-distance) }
 	}
 
+	// Removes all heap allocated objects (do not leave references to these objects)
+	#[inline]
+	fn free_objects(&mut self) {
+		self.objects.clear();
+	}
+
+	#[cold]
 	pub fn runtime_error(&mut self, args: Arguments) {
 		let line = self.chunk.lines[self.offset()];
 		error!("{} [line {line}] in script", args);
@@ -109,6 +117,7 @@ impl<'a> Runtime<'a> {
 	/// Interprets the [Chunk], matching each opcode instruction.
 	pub fn interpret(&mut self) -> Result<(), InterpretError> {
 		trace!("Interpreting chunk");
+		assert_ne!(self.chunk.len(), 0, "Chunk should not be empty");
 		loop {
 			#[cfg(feature = "trace_execution")]
 			{
