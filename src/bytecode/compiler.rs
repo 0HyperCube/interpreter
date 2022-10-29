@@ -40,6 +40,10 @@ impl<'a, 'source> Parser<'a, 'source> {
 			false
 		}
 	}
+	/// Are we at the end?
+	fn at_end(&self) -> bool {
+		self.current.as_ref().filter(|token| token != TokenType::End).is_none()
+	}
 	/// Create an error at the specified token
 	fn error_at(&self, token: &Token, message: &str) {
 		if self.panic {
@@ -229,9 +233,33 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 
+	/// After an error skip tokens until we find a new statement
+	fn synchronise_error(&mut self) {
+		self.panic = false;
+		while !self.at_end() {
+			if self.previous.filter(|previous| previous.token_type == TokenType::Semicolon) {
+				break;
+			}
+			if matches!(
+				self.current,
+				Some(Token {
+					token_type: TokenType::Fn | TokenType::Let | TokenType::For | TokenType::If | TokenType::While | TokenType::Print | TokenType::Return,
+					..
+				})
+			) {
+				return;
+			}
+			self.advance();
+		}
+	}
+
 	/// Parse a decleration (class, function, variable or statement)
 	fn decleration(&mut self) {
 		self.statement();
+
+		if self.panic {
+			self.synchronise_error();
+		}
 	}
 
 	/// Compiles the source into the specified chunk, returing true if successful
