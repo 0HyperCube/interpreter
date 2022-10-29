@@ -213,10 +213,19 @@ impl<'a, 'source> Parser<'a, 'source> {
 		self.emit_byte(Opcode::Print);
 	}
 
+	/// A statent that is just an expression e.g. `5+3;` or `foo(bar);`
+	fn expression_statement(&mut self) {
+		self.expression();
+		self.consume(TokenType::Semicolon, "Print statements must end with a ';'");
+		self.emit_byte(Opcode::Pop);
+	}
+
 	/// Parse a statement (expression, for, if, pring, return, while or block)
 	fn statement(&mut self) {
 		if self.matches(TokenType::Print) {
 			self.print_statement();
+		} else {
+			self.expression_statement();
 		}
 	}
 

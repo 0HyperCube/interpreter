@@ -248,6 +248,9 @@ impl<'a, 'source> Runtime<'a, 'source> {
 				Opcode::Print => {
 					info!("{:?}", self.pop_stack());
 				}
+				Opcode::Pop => {
+					self.pop_stack();
+				}
 			}
 		}
 	}

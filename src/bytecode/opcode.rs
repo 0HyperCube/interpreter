@@ -48,6 +48,7 @@ opcode! {
 		14 => Less,
 
 		15 => Print,
+		16 => Pop,
 	}
 }
 
