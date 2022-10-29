@@ -46,6 +46,8 @@ opcode! {
 		12 => Equal,
 		13 => Greater,
 		14 => Less,
+
+		15 => Print,
 	}
 }
 

@@ -54,8 +54,21 @@ fn read_line() -> String {
 
 /// Starts the REPL - the read evaluate print loop - for interactive testing
 pub fn repl() {
+	let mut editor = rustyline::Editor::<()>::new();
+	editor.add_history_entry(r#""hello"+"world""#);
 	loop {
-		let command = read_line();
+		let command = match editor.readline("📡 ") {
+			Ok(line) => line,
+			Err(e) => {
+				if matches!(e, rustyline::error::ReadlineError::Eof | rustyline::error::ReadlineError::Interrupted) {
+					info!("Goodbye");
+					return;
+				}
+				error!("Error reading line {e:?}.");
+				continue;
+			}
+		};
+		editor.add_history_entry(&command);
 		if command.is_empty() {
 			break;
 		}
@@ -78,4 +91,26 @@ pub fn run_file(path: &str) {
 			InterpretError::InterpretError => std::process::exit(70),
 		}
 	}
+}
+
+#[test]
+fn dyns() {
+	struct Y(u32);
+	trait Bob {
+		fn add(&mut self);
+	}
+	impl Bob for Y {
+		fn add(&mut self) {
+			self.0 += 1;
+		}
+	}
+	let mut y = Y(3);
+	let t = &mut y as &mut dyn Bob;
+	t.add();
+	println!("{:?}", y.0);
+}
+
+#[test]
+fn div_zero() {
+	println!("{}", 4. / 0.)
 }

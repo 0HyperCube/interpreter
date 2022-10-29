@@ -1,6 +1,17 @@
 use std::fmt::Arguments;
 
+use ahash::{AHashMap, AHashSet};
+
 use crate::bytecode::prelude::*;
+
+macro_rules! runtime_error {
+	($runtime:ident, $($arg:tt)+) => {
+		let line = $runtime.chunk.lines[$runtime.offset()];
+		error!(target: "nonew", $($arg)+);
+		println!("[line {line}] in script");
+		$runtime.reset_stack();
+	};
+}
 
 /// The interpeter's runtime, containing the current [Chunk], a pointer to the next instruction and the stack
 pub struct Runtime<'a, 'source> {
@@ -13,7 +24,9 @@ pub struct Runtime<'a, 'source> {
 	/// Pointer to the top of the stack (leading to slightly better performance)
 	stack_top: *mut Value<'source>,
 	/// All the heap objects need to be stored so they can be deleted by garbage collection
-	objects: Vec<Obj>,
+	objects: Vec<Box<ObjTy>>,
+	/// A hash table of all strings (to reduce memory usage and comparison times)
+	strings: AHashSet<ObjRef>,
 }
 
 impl<'a, 'source> Runtime<'a, 'source> {
@@ -26,6 +39,7 @@ impl<'a, 'source> Runtime<'a, 'source> {
 			stack_top: stack.as_mut_ptr(),
 			stack,
 			objects: Vec::new(),
+			strings: Default::default(),
 		}
 	}
 
@@ -35,12 +49,25 @@ impl<'a, 'source> Runtime<'a, 'source> {
 		self.ip = chunk.as_ptr();
 		self.reset_stack();
 		self.free_objects();
+		self.strings.clear();
 	}
 
 	/// Clear the stack and reset the stack top
 	pub fn reset_stack(&mut self) {
 		self.stack.clear();
 		self.stack_top = self.stack.as_mut_ptr();
+	}
+
+	/// Allocates a new string object, using string interning for cheaper comparsions
+	///
+	/// Note: strings are immutable
+	pub fn new_string(&mut self, val: String) -> ObjRef {
+		self.strings.iter().copied().find(|existing_str| existing_str.as_ref_unchecked::<String>() == &val).unwrap_or_else(|| {
+			let (obj_ref, owned) = ObjRef::new(val);
+			self.objects.push(owned);
+			self.strings.insert(obj_ref);
+			obj_ref
+		})
 	}
 
 	/// Read a byte of bytecode and move to the next one
@@ -86,7 +113,7 @@ impl<'a, 'source> Runtime<'a, 'source> {
 			self.stack_top = self.stack_top.offset(1);
 		}
 	}
-	// Pops an item from the top of the stack, returning it
+	/// Pops an item from the top of the stack, returning it
 	#[inline]
 	pub fn pop_stack(&mut self) -> &'a Value<'source> {
 		unsafe {
@@ -95,23 +122,25 @@ impl<'a, 'source> Runtime<'a, 'source> {
 		}
 	}
 
-	// Peeks at an item a certain distance from the top of the stack
+	/// Peeks at an item a certain distance from the top of the stack
 	#[inline]
 	pub fn peep_stack(&mut self, distance: isize) -> &'a Value<'source> {
 		unsafe { &*self.stack_top.offset(-distance) }
 	}
 
-	// Removes all heap allocated objects (do not leave references to these objects)
+	// /// Allocates an object, storing it in the objects list so it can be garbage collected. Returns a raw pointer to the object.
+	// #[inline]
+	// pub fn allocate_obj(&mut self, obj: impl Into<ObjTy>) -> *mut ObjTy {
+	// 	self.objects.push(obj.into());
+	// 	unsafe { self.objects.as_mut_ptr_range().end.offset(-1) }
+	// }
+
+	/// Removes all heap allocated objects (do not leave references to these objects)
 	#[inline]
 	fn free_objects(&mut self) {
-		self.objects.clear();
-	}
-
-	#[cold]
-	pub fn runtime_error(&mut self, args: Arguments) {
-		let line = self.chunk.lines[self.offset()];
-		error!("{} [line {line}] in script", args);
-		self.reset_stack();
+		while let Some(obj) = self.objects.pop() {
+			ObjTy::free(obj)
+		}
 	}
 
 	/// Interprets the [Chunk], matching each opcode instruction.
@@ -148,7 +177,7 @@ impl<'a, 'source> Runtime<'a, 'source> {
 						if let [Value::Number(a), Value::Number(b)] = [a,b]{
 							self.push_stack(Value::$resultv(a $op b));
 						}else{
-							self.runtime_error(format_args!("Operands must be numbers"));
+							runtime_error!(self, "Operands must be numbers");
 						}
 
 					}
@@ -172,10 +201,29 @@ impl<'a, 'source> Runtime<'a, 'source> {
 					if let Value::Number(input) = input {
 						self.push_stack(Value::Number(-input));
 					} else {
-						self.runtime_error(format_args!("Operand must be numbers"))
+						runtime_error!(self, "Operands must be numbers");
 					}
 				}
-				Opcode::Add => binary_op!(+ => Number),
+				Opcode::Add => {
+					fn get_str<'a>(b: &'a Value) -> Option<&'a str> {
+						match b {
+							Value::StrRef(x) => Some(*x),
+							Value::Obj(x) => x.as_ref::<String>().map(|x| x.as_str()),
+							_ => None,
+						}
+					}
+
+					let b = self.pop_stack();
+					let a = self.pop_stack();
+					if let [Value::Number(a), Value::Number(b)] = [a, b] {
+						self.push_stack(Value::Number(a + b));
+					} else if let Some(b) = get_str(b) && let Some(a) = get_str(a){
+						let obj_ref = self.new_string(a.to_string() + b);
+						self.push_stack(Value::Obj( obj_ref));
+					} else{
+						runtime_error!(self, "Operands to '+' must be numbers or strings");
+					}
+				}
 				Opcode::Subtract => binary_op!(- => Number),
 				Opcode::Multiply => binary_op!(* => Number),
 				Opcode::Divide => binary_op!(/ => Number),
@@ -187,7 +235,7 @@ impl<'a, 'source> Runtime<'a, 'source> {
 					if let Value::Bool(x) = input {
 						self.push_stack(Value::Bool(!x))
 					} else {
-						self.runtime_error(format_args!("Operand must be a boolean"));
+						runtime_error!(self, "Operand must be a boolean");
 					}
 				}
 				Opcode::Equal => {
@@ -197,6 +245,9 @@ impl<'a, 'source> Runtime<'a, 'source> {
 				}
 				Opcode::Greater => binary_op!(> => Bool),
 				Opcode::Less => binary_op!(< => Bool),
+				Opcode::Print => {
+					info!("{:?}", self.pop_stack());
+				}
 			}
 		}
 	}

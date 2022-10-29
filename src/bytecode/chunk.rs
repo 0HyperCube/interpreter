@@ -3,12 +3,12 @@ use std::{cell::RefCell, mem::size_of};
 
 use crate::bytecode::prelude::*;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Value<'source> {
 	Number(f64),
 	Bool(bool),
 	Null,
-	Obj(*mut Obj),
+	Obj(ObjRef),
 	StrRef(&'source str),
 }
 
@@ -18,8 +18,29 @@ impl core::fmt::Debug for Value<'_> {
 			Value::Number(n) => write!(f, "{}", n),
 			Value::Bool(v) => write!(f, "{}", v),
 			Value::Null => write!(f, "null"),
-			Value::Obj(s) => write!(f, "Obj({:?})", unsafe { &**s }),
+			Value::Obj(s) => write!(f, "{:?}", s),
 			Value::StrRef(s) => write!(f, "\"{s}\""),
+		}
+	}
+}
+
+impl PartialEq for Value<'_> {
+	fn eq(&self, other: &Self) -> bool {
+		match (self, other) {
+			(Self::Number(l0), Self::Number(r0)) => l0 == r0,
+			(Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+			(Self::Obj(l0), Self::Obj(r0)) => {
+				l0.object_ty() == r0.object_ty()
+					&& match l0.object_ty() {
+						ObjTy::Str => l0 == r0,
+						ObjTy::Other => unimplemented!(),
+					}
+			}
+
+			(Self::StrRef(l0), Self::StrRef(r0)) => l0 == r0,
+			(Self::StrRef(l0), Self::Obj(objref)) | (Self::Obj(objref), Self::StrRef(l0)) => matches!(objref.as_ref::<String>(), l0),
+			(Self::Null, Self::Null) => true,
+			_ => false,
 		}
 	}
 }

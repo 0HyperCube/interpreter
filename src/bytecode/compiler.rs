@@ -27,6 +27,19 @@ impl<'a, 'source> Parser<'a, 'source> {
 			compiling_chunk: chunk,
 		}
 	}
+	/// Does current match the token?
+	fn check(&self, token_type: TokenType) -> bool {
+		self.current.as_ref().filter(|token| token.token_type == token_type).is_some()
+	}
+	/// Does current match the token? If so then advance.
+	fn matches(&mut self, token_type: TokenType) -> bool {
+		if self.check(token_type) {
+			self.advance();
+			true
+		} else {
+			false
+		}
+	}
 	/// Create an error at the specified token
 	fn error_at(&self, token: &Token, message: &str) {
 		if self.panic {
@@ -72,6 +85,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 				self.error_at_current(msg)
 			}
 		}
+		trace!("Current {:?}", self.current);
 	}
 	/// Emits a byte with the line number of the previous token
 	fn emit_byte(&mut self, byte: impl Into<u8>) {
@@ -141,7 +155,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 	fn binary(&mut self) {
 		if let Some(token) = &self.previous {
 			let operator = token.token_type;
-			let rule = get_rule(operator).precedence.next();
+			let rule = get_rule(operator).precedence;
 			self.parse_precedence(rule.next());
 			match operator {
 				TokenType::Plus => self.emit_byte(Opcode::Add),
@@ -193,11 +207,32 @@ impl<'a, 'source> Parser<'a, 'source> {
 		self.parse_precedence(Precedence::Assignment);
 	}
 
+	fn print_statement(&mut self) {
+		self.expression();
+		self.consume(TokenType::Semicolon, "Print statements must end with a ';'");
+		self.emit_byte(Opcode::Print);
+	}
+
+	/// Parse a statement (expression, for, if, pring, return, while or block)
+	fn statement(&mut self) {
+		if self.matches(TokenType::Print) {
+			self.print_statement();
+		}
+	}
+
+	/// Parse a decleration (class, function, variable or statement)
+	fn decleration(&mut self) {
+		self.statement();
+	}
+
 	/// Compiles the source into the specified chunk, returing true if successful
 	pub fn compile(source: &'source str, chunk: &'a mut Chunk<'source>) -> bool {
 		let mut parser = Parser::new(source, chunk);
 		parser.advance();
-		parser.expression();
+		while parser.current.as_ref().filter(|token| token.token_type != TokenType::End).is_some() {
+			parser.decleration();
+		}
+
 		parser.emit_return();
 		!parser.error
 	}

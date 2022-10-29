@@ -45,6 +45,7 @@ pub enum TokenType {
 	Return,
 	Let,
 	Null,
+	Print,
 
 	Error,
 	End,
@@ -257,6 +258,7 @@ impl<'a> Scanner<'a> {
 			b'r' => self.check_keyword(1, "eturn", TokenType::Return),
 			b'l' => self.check_keyword(1, "et", TokenType::Let),
 			b'n' => self.check_keyword(1, "ull", TokenType::Null),
+			b'p' => self.check_keyword(1, "rint", TokenType::Print),
 			_ => TokenType::Identifier,
 		};
 		info!("Token {:?}", token_type);

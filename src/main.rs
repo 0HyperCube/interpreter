@@ -1,5 +1,6 @@
 #![feature(option_result_contains)]
 #![allow(unused)]
+#![feature(let_chains)]
 
 #[macro_use]
 extern crate log;

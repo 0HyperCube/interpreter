@@ -16,8 +16,8 @@ pub fn init_logger() {
 struct SimpleLogger;
 
 impl log::Log for SimpleLogger {
-	fn enabled(&self, _metadata: &Metadata) -> bool {
-		true
+	fn enabled(&self, metadata: &Metadata) -> bool {
+		metadata.target() != "rustyline"
 	}
 
 	fn log(&self, record: &Record) {
@@ -36,7 +36,10 @@ impl log::Log for SimpleLogger {
 			} else {
 				let file = record.file().unwrap_or_default();
 				let line = record.line().unwrap_or_default();
-				println!("{:<12}\x1b[90m {}:{}\x1b[39m: {}", level, file, line, record.args());
+				print!("{:<12}\x1b[90m {}:{}\x1b[39m: {}", level, file, line, record.args());
+				if !matches!(record.target(), "nonew") {
+					println!();
+				}
 			}
 		}
 	}
