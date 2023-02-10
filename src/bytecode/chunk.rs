@@ -71,19 +71,23 @@ impl<'source> Chunk<'source> {
 	pub fn len(&self) -> usize {
 		self.code.len()
 	}
+
+	/// Makes a constant in the chunk's storage, returning the index of the constant
+	pub fn make_constant(&mut self, constant: Value<'source>) -> usize {
+		self.constants.push(constant);
+		self.constants.len() - 1
+	}
+
 	/// Push a constant.
 	///
-	/// First inserts either a [`Opcode::Constant`] or [`Opcode::LongConstant`] depending on the current number of constants,
+	/// First inserts either a the `short_op` or `long_op` depending on the current number of constants,
 	/// then it inserts the constant index, a single byte for normal constants and three bytes for long constants.
-	/// It also pushes the constant into the chunk's storage.
-	pub fn push_constant(&mut self, constant: Value<'source>, line: Line) {
-		self.constants.push(constant);
-		let id = self.constants.len() - 1;
+	pub fn push_constant(&mut self, id: usize, line: Line, short_op: Opcode, long_op: Opcode) {
 		if id <= u8::MAX as usize {
-			self.push(Opcode::Constant, line);
+			self.push(short_op, line);
 			self.push(id as u8, line);
 		} else {
-			self.push(Opcode::LongConstant, line);
+			self.push(long_op, line);
 			self.push((id >> 16) as u8, line);
 			self.push((id >> 8) as u8, line);
 			self.push(id as u8, line);

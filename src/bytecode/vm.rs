@@ -27,6 +27,8 @@ pub struct Runtime<'a, 'source> {
 	objects: Vec<Box<ObjTy>>,
 	/// A hash table of all strings (to reduce memory usage and comparison times)
 	strings: AHashSet<ObjRef>,
+	/// Hash set of global variables
+	globals: AHashMap<&'source str, Value<'source>>,
 }
 
 impl<'a, 'source> Runtime<'a, 'source> {
@@ -40,6 +42,7 @@ impl<'a, 'source> Runtime<'a, 'source> {
 			stack,
 			objects: Vec::new(),
 			strings: Default::default(),
+			globals: Default::default(),
 		}
 	}
 
@@ -250,6 +253,19 @@ impl<'a, 'source> Runtime<'a, 'source> {
 				}
 				Opcode::Pop => {
 					self.pop_stack();
+				}
+
+				Opcode::DefineGlobalVariable => {
+					if let Value::StrRef(name) = self.short_constant() {
+						let value = self.pop_stack().clone();
+						self.globals.insert(name, value);
+					}
+				}
+				Opcode::DefineLongGlobalVariable => {
+					if let Value::StrRef(name) = self.long_constant() {
+						let value = self.pop_stack().clone();
+						self.globals.insert(name, value);
+					}
 				}
 			}
 		}

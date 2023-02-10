@@ -41,6 +41,7 @@ pub enum TokenType {
 	True,
 	False,
 	For,
+	While,
 	Fn,
 	Return,
 	Let,

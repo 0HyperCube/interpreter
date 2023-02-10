@@ -49,6 +49,9 @@ opcode! {
 
 		15 => Print,
 		16 => Pop,
+
+		17 => DefineGlobalVariable,
+		18 => DefineLongGlobalVariable,
 	}
 }
 

@@ -42,7 +42,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 	}
 	/// Are we at the end?
 	fn at_end(&self) -> bool {
-		self.current.as_ref().filter(|token| token != TokenType::End).is_none()
+		self.current.as_ref().filter(|token| token.token_type != TokenType::End).is_none()
 	}
 	/// Create an error at the specified token
 	fn error_at(&self, token: &Token, message: &str) {
@@ -115,7 +115,8 @@ impl<'a, 'source> Parser<'a, 'source> {
 	/// Emit a constant at the last token
 	fn emit_constant(&mut self, value: Value<'source>) {
 		if let Some(token) = &self.previous {
-			self.compiling_chunk.push_constant(value, token.line)
+			let id = self.compiling_chunk.make_constant(value);
+			self.compiling_chunk.push_constant(id, token.line, Opcode::Constant, Opcode::LongConstant)
 		}
 	}
 	/// Attempt to consume a token, creating an error on failiure and advancing on success
@@ -237,13 +238,13 @@ impl<'a, 'source> Parser<'a, 'source> {
 	fn synchronise_error(&mut self) {
 		self.panic = false;
 		while !self.at_end() {
-			if self.previous.filter(|previous| previous.token_type == TokenType::Semicolon) {
+			if self.previous.as_ref().filter(|previous| previous.token_type == TokenType::Semicolon).is_some() {
 				break;
 			}
 			if matches!(
 				self.current,
 				Some(Token {
-					token_type: TokenType::Fn | TokenType::Let | TokenType::For | TokenType::If | TokenType::While | TokenType::Print | TokenType::Return,
+					token_type: TokenType::Fn | TokenType::Let | TokenType::For | TokenType::If | TokenType::Print | TokenType::Return, // | TokenType::While
 					..
 				})
 			) {
@@ -253,9 +254,46 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 
-	/// Parse a decleration (class, function, variable or statement)
-	fn decleration(&mut self) {
-		self.statement();
+	fn parse_variable(&mut self) -> Option<(usize, Line)> {
+		self.consume(TokenType::Identifier, "Expected variable name.");
+
+		if let Some(token) = &self.previous {
+			let id = self.compiling_chunk.make_constant(Value::StrRef(token.contents));
+			info!("Made constant {id} {}", token.contents);
+			Some((id, token.line))
+		} else {
+			None
+		}
+	}
+
+	fn define_variable(&mut self, index: usize, line: Line) {
+		info!("Defining variable {index} {line}");
+		self.compiling_chunk.push_constant(index, line, Opcode::DefineGlobalVariable, Opcode::DefineLongGlobalVariable)
+	}
+
+	fn variable_declaration(&mut self) {
+		let global = self.parse_variable();
+
+		if self.matches(TokenType::Equals) {
+			self.expression();
+		} else {
+			self.emit_byte(Opcode::Null);
+		}
+
+		self.consume(TokenType::Semicolon, "Expected ';' after variable declaration");
+
+		if let Some((index, line)) = global {
+			self.define_variable(index, line);
+		}
+	}
+
+	/// Parse a declaration (class, function, variable or statement)
+	fn declaration(&mut self) {
+		if self.matches(TokenType::Let) {
+			self.variable_declaration();
+		} else {
+			self.statement();
+		}
 
 		if self.panic {
 			self.synchronise_error();
@@ -267,7 +305,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 		let mut parser = Parser::new(source, chunk);
 		parser.advance();
 		while parser.current.as_ref().filter(|token| token.token_type != TokenType::End).is_some() {
-			parser.decleration();
+			parser.declaration();
 		}
 
 		parser.emit_return();
