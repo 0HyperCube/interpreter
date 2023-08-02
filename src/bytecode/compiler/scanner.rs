@@ -183,7 +183,7 @@ impl<'a> Scanner<'a> {
 				// Comments are treated as whitespace
 				Some('/') => match self.chars.peek2() {
 					Some('/') => {
-						while !self.chars.peek1().contains(&'\n') && !self.at_end() {
+						while self.chars.peek1() != Some('\n') && !self.at_end() {
 							self.advance();
 						}
 					}
@@ -191,7 +191,7 @@ impl<'a> Scanner<'a> {
 						self.start_line = self.line;
 						self.advance();
 						self.advance();
-						while !(self.chars.peek1().contains(&'*') && self.chars.peek2().contains(&'/')) {
+						while !(self.chars.peek1() == Some('*') && self.chars.peek2() == Some('/')) {
 							self.advance();
 							if self.at_end() {
 								return Err("Unclosed multiline comment");
