@@ -15,13 +15,16 @@ mod line;
 mod logger;
 mod opcode;
 mod vm;
+use std::{
+	cell::{Ref, RefCell},
+	rc::Rc,
+	sync::Arc,
+};
 
 use prelude::*;
 
-pub fn interpret(source: &str) -> Result<(), InterpretError> {
+pub fn interpret<'source>(source: &'source str, runtime: &mut Runtime) -> Result<(), InterpretError> {
 	trace!("Starting bytecode {source}");
-	let chunk = Chunk::new();
-	let mut runtime = Runtime::new(&chunk);
 	let mut chunk = Chunk::new();
 	if !Parser::compile(source, &mut chunk) {
 		trace!("Compile error");
@@ -31,6 +34,7 @@ pub fn interpret(source: &str) -> Result<(), InterpretError> {
 	runtime.reset(&chunk);
 	runtime.interpret()?;
 	trace!("Runtime ok");
+	runtime.chunk = &Chunk::EMPTY;
 
 	Ok(())
 }
@@ -55,7 +59,10 @@ fn read_line() -> String {
 /// Starts the REPL - the read evaluate print loop - for interactive testing
 pub fn repl() {
 	let mut editor = rustyline::Editor::<()>::new();
-	editor.add_history_entry(r#""hello"+"world""#);
+	editor.add_history_entry(r#"print("hello" + " " + "world");"#);
+	editor.add_history_entry(r#"{let x = 4;{let x = x;print(x);}}"#);
+	let mut runtime = Runtime::new(&Chunk::EMPTY);
+	let mut lines = Vec::new();
 	loop {
 		let command = match editor.readline("📡 ") {
 			Ok(line) => line,
@@ -68,11 +75,12 @@ pub fn repl() {
 				continue;
 			}
 		};
-		editor.add_history_entry(&command);
+		editor.add_history_entry(command.clone());
 		if command.is_empty() {
 			break;
 		}
-		let _ = interpret(&command);
+		lines.push(command);
+		let _ = interpret(unsafe { &*(lines.as_ptr().add(lines.len() - 1)) }, &mut runtime);
 	}
 }
 
@@ -85,7 +93,7 @@ pub fn run_file(path: &str) {
 			std::process::exit(74);
 		}
 	};
-	if let Err(e) = interpret(&file) {
+	if let Err(e) = interpret(&file, &mut Runtime::new(&Chunk::EMPTY)) {
 		match e {
 			InterpretError::CompileError => std::process::exit(65),
 			InterpretError::InterpretError => std::process::exit(70),

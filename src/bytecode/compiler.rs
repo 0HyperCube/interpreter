@@ -2,9 +2,20 @@ mod parse_rules;
 mod precedence;
 pub mod scanner;
 
+use std::cell::Ref;
+
 use crate::bytecode::prelude::*;
 use parse_rules::*;
 use precedence::Precedence;
+pub struct Local<'source> {
+	ident: Token<'source>,
+	depth: usize,
+}
+#[derive(Default)]
+pub struct Compiler<'source> {
+	locals: Vec<Local<'source>>,
+	depth: usize,
+}
 
 /// A simple Pratt parser that walks over the source code and output bytecode in a single pass
 pub struct Parser<'a, 'source> {
@@ -13,11 +24,12 @@ pub struct Parser<'a, 'source> {
 	previous: Option<Token<'source>>,
 	error: bool,
 	panic: bool,
-	compiling_chunk: &'a mut Chunk<'source>,
+	compiling_chunk: &'a mut Chunk,
+	compiler: Compiler<'source>,
 }
 impl<'a, 'source> Parser<'a, 'source> {
 	/// Construct a new parser from the source and the target chunk
-	fn new(source: &'source str, chunk: &'a mut Chunk<'source>) -> Self {
+	fn new(source: &'source str, chunk: &'a mut Chunk) -> Self {
 		Self {
 			scanner: Scanner::new(source),
 			current: None,
@@ -25,6 +37,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 			error: false,
 			panic: false,
 			compiling_chunk: chunk,
+			compiler: Compiler::default(),
 		}
 	}
 	/// Does current match the token?
@@ -45,12 +58,24 @@ impl<'a, 'source> Parser<'a, 'source> {
 		self.current.as_ref().filter(|token| token.token_type != TokenType::End).is_none()
 	}
 	/// Create an error at the specified token
+	#[track_caller]
 	fn error_at(&self, token: &Token, message: &str) {
 		if self.panic {
 			return;
 		}
 
-		error!(target: "Source Error", "Line {}", token.line);
+		let location = std::panic::Location::caller();
+
+		let record = log::Record::builder()
+			.args(format_args!("Line"))
+			.level(log::Level::Error)
+			.file(Some(location.file()))
+			.line(Some(location.line()))
+			.target("nonew")
+			.build();
+		log::logger().log(&record);
+
+		print!(" {}", token.line);
 		match token.token_type {
 			TokenType::Error => {}
 			TokenType::End => print!(" at end"),
@@ -59,6 +84,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 		println!(": {}", message);
 	}
 	/// Create an error at the current token
+	#[track_caller]
 	fn error_at_current(&mut self, message: &str) {
 		if let Some(token) = &self.current {
 			self.error_at(token, message);
@@ -67,6 +93,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 	/// Create an error at the previous token (most errors)
+	#[track_caller]
 	fn error_at_previous(&mut self, message: &str) {
 		if let Some(token) = &self.previous {
 			self.error_at(token, message);
@@ -113,13 +140,21 @@ impl<'a, 'source> Parser<'a, 'source> {
 		disassemble!(chunk = &self.compiling_chunk, name = "code");
 	}
 	/// Emit a constant at the last token
-	fn emit_constant(&mut self, value: Value<'source>) {
+	fn emit_constant(&mut self, value: Value) {
 		if let Some(token) = &self.previous {
 			let id = self.compiling_chunk.make_constant(value);
 			self.compiling_chunk.push_constant(id, token.line, Opcode::Constant, Opcode::LongConstant)
 		}
 	}
+	/// Make the identifier into a constant
+	fn emit_string(&mut self, value: String) {
+		if let Some(token) = &self.previous {
+			let id = self.compiling_chunk.make_string(value);
+			self.compiling_chunk.push_constant(id, token.line, Opcode::Constant, Opcode::LongConstant)
+		}
+	}
 	/// Attempt to consume a token, creating an error on failiure and advancing on success
+	#[track_caller]
 	fn consume(&mut self, target: TokenType, message: &'a str) {
 		if self.current.as_ref().filter(|token| token.token_type == target).is_some() {
 			self.advance();
@@ -128,24 +163,62 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 	/// Parses a string literal
-	fn string(&mut self) {
+	fn string(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
-			self.emit_constant(Value::StrRef(&token.contents[1..(token.contents.len() - 1)]));
+			self.emit_string(token.contents[1..(token.contents.len() - 1)].to_string());
 		}
 	}
+	/// Parses a variable identifer
+	fn variable(&mut self, can_assign: bool) {
+		if let Some(token) = self.previous.clone() {
+			self.named_variable(&token, can_assign);
+		}
+	}
+	pub fn named_variable(&mut self, name: &Token<'source>, can_assign: bool) {
+		let local = self.resolve_local(name);
+		let index = local.unwrap_or_else(|| self.compiling_chunk.make_string(name.contents.to_string()));
+
+		if can_assign && self.matches(TokenType::Equals) {
+			self.expression();
+			let [short, long] = if local.is_some() {
+				[Opcode::SetLocal, Opcode::SetLongLocal]
+			} else {
+				[Opcode::SetGlobal, Opcode::SetLongGlobal]
+			};
+			self.compiling_chunk.push_constant(index, name.line, short, long);
+		} else {
+			let [short, long] = if local.is_some() {
+				[Opcode::GetLocal, Opcode::GetLongLocal]
+			} else {
+				[Opcode::GetGlobalVariable, Opcode::GetLongGlobalVariable]
+			};
+			self.compiling_chunk.push_constant(index, name.line, short, long);
+		}
+	}
+
+	fn resolve_local(&mut self, name: &Token<'source>) -> Option<usize> {
+		self.compiler
+			.locals
+			.iter()
+			.enumerate()
+			.rev()
+			.find(|(_, local)| local.ident.contents == name.contents)
+			.map(|(index, _)| index)
+	}
+
 	/// Parses a number with `str::parse`
-	fn number(&mut self) {
+	fn number(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
 			self.emit_constant(Value::Number(token.contents.parse().unwrap()));
 		}
 	}
 	/// Parses a grouping `(5+5)`
-	fn grouping(&mut self) {
+	fn grouping(&mut self, _can_assign: bool) {
 		self.expression();
 		self.consume(TokenType::RightParen, "Expected closing ')'");
 	}
 	/// Parses a unary expression like `-5`
-	fn unary(&mut self) {
+	fn unary(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
 			let token_type = token.token_type;
 			self.parse_precedence(Precedence::Unary);
@@ -157,7 +230,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 	/// Parses a binary expression like `5-5`
-	fn binary(&mut self) {
+	fn binary(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
 			let operator = token.token_type;
 			let rule = get_rule(operator).precedence;
@@ -177,7 +250,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 	/// Parses literal like `true`, `false` or `null`
-	fn literal(&mut self) {
+	fn literal(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
 			match token.token_type {
 				TokenType::True => self.emit_byte(Opcode::True),
@@ -191,8 +264,9 @@ impl<'a, 'source> Parser<'a, 'source> {
 	fn parse_precedence(&mut self, precedence: Precedence) {
 		self.advance();
 		let prefix = self.previous.as_ref().map_or(None, |token| get_rule(token.token_type).prefix);
+		let can_assign = precedence as u8 <= Precedence::Assignment as u8;
 		if let Some(prefix) = prefix {
-			prefix(self);
+			prefix(self, can_assign);
 		} else {
 			self.error_at_previous("Expected expression")
 		}
@@ -201,10 +275,15 @@ impl<'a, 'source> Parser<'a, 'source> {
 			self.advance();
 			let infix = self.previous.as_ref().map_or(None, |token| get_rule(token.token_type).infix);
 			if let Some(infix) = infix {
-				infix(self);
+				infix(self, can_assign);
 			} else {
 				self.error_at_previous("Expected expression")
 			}
+		}
+
+		if can_assign && self.check(TokenType::Equals) {
+			warn!("curr {:?}", self.current);
+			self.error_at_current("Invalid assignment target.");
 		}
 	}
 	/// Parses with the [`Precedence::Assignment`] precedence
@@ -213,7 +292,9 @@ impl<'a, 'source> Parser<'a, 'source> {
 	}
 
 	fn print_statement(&mut self) {
+		self.consume(TokenType::LeftParen, "Print statements must have a '(' after the print keyword");
 		self.expression();
+		self.consume(TokenType::RightParen, "Print statements must end with a ')'");
 		self.consume(TokenType::Semicolon, "Print statements must end with a ';'");
 		self.emit_byte(Opcode::Print);
 	}
@@ -221,7 +302,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 	/// A statent that is just an expression e.g. `5+3;` or `foo(bar);`
 	fn expression_statement(&mut self) {
 		self.expression();
-		self.consume(TokenType::Semicolon, "Print statements must end with a ';'");
+		self.consume(TokenType::Semicolon, "Statements must end with a ';'");
 		self.emit_byte(Opcode::Pop);
 	}
 
@@ -229,8 +310,30 @@ impl<'a, 'source> Parser<'a, 'source> {
 	fn statement(&mut self) {
 		if self.matches(TokenType::Print) {
 			self.print_statement();
+		} else if self.matches(TokenType::LeftBrace) {
+			self.begin_scope();
+			self.block();
+			self.end_scope();
 		} else {
 			self.expression_statement();
+		}
+	}
+
+	fn block(&mut self) {
+		while !self.check(TokenType::RightBrace) && !self.check(TokenType::End) {
+			self.declaration();
+		}
+		self.consume(TokenType::RightBrace, "Blocks should end with '}'.");
+	}
+
+	fn begin_scope(&mut self) {
+		self.compiler.depth += 1;
+	}
+	fn end_scope(&mut self) {
+		self.compiler.depth -= 1;
+		while let Some(last) = self.compiler.locals.last().filter(|last| last.depth > self.compiler.depth) {
+			self.emit_byte(Opcode::Pop);
+			self.compiler.locals.pop();
 		}
 	}
 
@@ -254,11 +357,25 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 	}
 
-	fn parse_variable(&mut self) -> Option<(usize, Line)> {
-		self.consume(TokenType::Identifier, "Expected variable name.");
+	fn declare_variable(&mut self, token: Token<'source>) {
+		if self.compiler.depth == 0 {
+			return;
+		}
+		self.compiler.locals.push(Local {
+			ident: token,
+			depth: self.compiler.depth,
+		})
+	}
+
+	fn parse_variable(&mut self, message: &'static str) -> Option<(usize, Line)> {
+		self.consume(TokenType::Identifier, message);
 
 		if let Some(token) = &self.previous {
-			let id = self.compiling_chunk.make_constant(Value::StrRef(token.contents));
+			if self.compiler.depth > 0 {
+				return None;
+			}
+
+			let id = self.compiling_chunk.make_string(token.contents.to_string());
 			info!("Made constant {id} {}", token.contents);
 			Some((id, token.line))
 		} else {
@@ -267,12 +384,16 @@ impl<'a, 'source> Parser<'a, 'source> {
 	}
 
 	fn define_variable(&mut self, index: usize, line: Line) {
+		if self.compiler.depth > 0 {
+			return;
+		}
 		info!("Defining variable {index} {line}");
 		self.compiling_chunk.push_constant(index, line, Opcode::DefineGlobalVariable, Opcode::DefineLongGlobalVariable)
 	}
 
 	fn variable_declaration(&mut self) {
-		let global = self.parse_variable();
+		let global = self.parse_variable("Expected variable name.");
+		let token = self.previous.clone();
 
 		if self.matches(TokenType::Equals) {
 			self.expression();
@@ -284,6 +405,8 @@ impl<'a, 'source> Parser<'a, 'source> {
 
 		if let Some((index, line)) = global {
 			self.define_variable(index, line);
+		} else if let Some(token) = token {
+			self.declare_variable(token);
 		}
 	}
 
@@ -301,7 +424,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 	}
 
 	/// Compiles the source into the specified chunk, returing true if successful
-	pub fn compile(source: &'source str, chunk: &'a mut Chunk<'source>) -> bool {
+	pub fn compile(source: &'source str, chunk: &'a mut Chunk) -> bool {
 		let mut parser = Parser::new(source, chunk);
 		parser.advance();
 		while parser.current.as_ref().filter(|token| token.token_type != TokenType::End).is_some() {

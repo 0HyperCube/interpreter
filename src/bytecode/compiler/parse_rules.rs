@@ -2,7 +2,7 @@ use super::precedence::Precedence;
 use crate::prelude::TokenType;
 
 /// The function that will execute to parse following the specified token
-pub type ParseFn<'r, 'source> = Option<fn(&mut super::Parser<'r, 'source>)>;
+pub type ParseFn<'r, 'source> = Option<fn(&mut super::Parser<'r, 'source>, bool)>;
 
 /// A single row in the parser table containing the prefix parse fn, the infix parse fn and the precedence
 pub struct ParseRule<'r, 'source> {
@@ -15,7 +15,7 @@ pub struct ParseRule<'r, 'source> {
 #[rustfmt::skip]
 pub fn get_rule<'r,'source>(token_type: TokenType) -> ParseRule<'r,'source> {
 
-	fn new<'r, 'source>(prefix:  ParseFn<'r,'source>, infix: ParseFn<'r,'source>, precedence: Precedence) -> ParseRule<'r,'source> {
+	fn new<'r, 'source>(prefix: ParseFn<'r,'source>, infix: ParseFn<'r,'source>, precedence: Precedence) -> ParseRule<'r,'source> {
 		ParseRule { prefix, infix, precedence }
 	}
 	use TokenType::*;
@@ -41,7 +41,7 @@ pub fn get_rule<'r,'source>(token_type: TokenType) -> ParseRule<'r,'source> {
 		GreaterEqual     => new(None,                   Some(Parser::binary),    Precedence::Comparison),
 		Less             => new(None,                   Some(Parser::binary),    Precedence::Comparison),
 		LessEqual        => new(None,                   Some(Parser::binary),    Precedence::Comparison),
-		Identifier       => new(None,                   None,                    Precedence::None      ),
+		Identifier       => new(Some(Parser::variable), None,                    Precedence::None      ),
 		StringLiteral    => new(Some(Parser::string),   None,                    Precedence::None      ),
 		NumberLiteral    => new(Some(Parser::number),   None,                    Precedence::None      ),
 		And              => new(None,                   None,                    Precedence::None      ),

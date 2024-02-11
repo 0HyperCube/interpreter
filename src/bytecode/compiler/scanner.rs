@@ -1,4 +1,5 @@
 use core::str::Chars;
+use std::cell::{Ref, RefCell};
 
 use crate::bytecode::prelude::*;
 
@@ -6,31 +7,53 @@ use crate::bytecode::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
 	// Single character
+	/// (
 	LeftParen,
+	/// )
 	RightParen,
+	/// {
 	LeftBrace,
+	/// }
 	RightBrace,
+	/// ,
 	Comma,
+	/// .
 	Dot,
+	/// -
 	Minus,
+	/// +
 	Plus,
+	/// ;
 	Semicolon,
+	/// /
 	Slash,
+	/// *
 	Star,
 
 	// One or two characters
+	/// !
 	Escamation,
+	/// !=
 	EscamationEquals,
+	/// =
 	Equals,
+	/// ==
 	EqualsEquals,
+	/// >
 	Greater,
+	/// >=
 	GreaterEqual,
+	/// <
 	Less,
+	/// <=
 	LessEqual,
 
 	// Literal
+	/// bob
 	Identifier,
+	/// "bob"
 	StringLiteral,
+	/// 3.14
 	NumberLiteral,
 
 	// Keywords
@@ -53,7 +76,7 @@ pub enum TokenType {
 }
 
 /// A fragment of user source code with a particular meaning
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token<'a> {
 	pub token_type: TokenType,
 	pub contents: &'a str,

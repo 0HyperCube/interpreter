@@ -1,30 +1,28 @@
 use core::ops::Index;
-use std::{cell::RefCell, mem::size_of};
+use std::{cell::RefCell, mem::size_of, sync::Arc};
 
 use crate::bytecode::prelude::*;
 
-#[derive(Clone)]
-pub enum Value<'source> {
+#[derive(Clone, Copy)]
+pub enum Value {
 	Number(f64),
 	Bool(bool),
 	Null,
 	Obj(ObjRef),
-	StrRef(&'source str),
 }
 
-impl core::fmt::Debug for Value<'_> {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for Value {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 		match self {
 			Value::Number(n) => write!(f, "{}", n),
 			Value::Bool(v) => write!(f, "{}", v),
 			Value::Null => write!(f, "null"),
 			Value::Obj(s) => write!(f, "{:?}", s),
-			Value::StrRef(s) => write!(f, "\"{s}\""),
 		}
 	}
 }
 
-impl PartialEq for Value<'_> {
+impl PartialEq for Value {
 	fn eq(&self, other: &Self) -> bool {
 		match (self, other) {
 			(Self::Number(l0), Self::Number(r0)) => l0 == r0,
@@ -36,9 +34,6 @@ impl PartialEq for Value<'_> {
 						ObjTy::Other => unimplemented!(),
 					}
 			}
-
-			(Self::StrRef(l0), Self::StrRef(r0)) => l0 == r0,
-			(Self::StrRef(l0), Self::Obj(objref)) | (Self::Obj(objref), Self::StrRef(l0)) => matches!(objref.as_ref::<String>(), l0),
 			(Self::Null, Self::Null) => true,
 			_ => false,
 		}
@@ -47,18 +42,28 @@ impl PartialEq for Value<'_> {
 
 /// Contains a seiries of bytecode instructions along with associated constants and [Line] numbers.
 #[derive(Default, Debug)]
-pub struct Chunk<'source> {
+pub struct Chunk {
 	code: Vec<u8>,
-	constants: Vec<Value<'source>>,
+	constants: Vec<Value>,
+	pub strings: Vec<ObjRef>,
+	pub objects: Vec<Box<ObjTy>>,
 
 	/// The line numbers, one for each line of bytecode.
 	pub lines: Vec<Line>,
 }
 
-impl<'source> Chunk<'source> {
+impl Chunk {
+	pub const EMPTY: Self = Self {
+		code: Vec::new(),
+		constants: Vec::new(),
+		strings: Vec::new(),
+		objects: Vec::new(),
+		lines: Vec::new(),
+	};
+
 	/// Construct an empty chunk
-	pub fn new() -> Self {
-		Self::default()
+	pub const fn new() -> Self {
+		Self::EMPTY
 	}
 	/// Push a byte to the bytecode
 	#[inline]
@@ -73,9 +78,16 @@ impl<'source> Chunk<'source> {
 	}
 
 	/// Makes a constant in the chunk's storage, returning the index of the constant
-	pub fn make_constant(&mut self, constant: Value<'source>) -> usize {
+	pub fn make_constant(&mut self, constant: Value) -> usize {
 		self.constants.push(constant);
 		self.constants.len() - 1
+	}
+
+	pub fn make_string(&mut self, val: String) -> usize {
+		let (reference, obj) = ObjRef::new(val);
+		self.objects.push(obj);
+		self.strings.push(reference);
+		self.make_constant(Value::Obj(reference))
 	}
 
 	/// Push a constant.
@@ -95,7 +107,7 @@ impl<'source> Chunk<'source> {
 	}
 	/// Retrieves a constant by index (unchecked).
 	#[inline]
-	pub fn constant(&self, idx: usize) -> &Value<'source> {
+	pub fn constant(&self, idx: usize) -> &Value {
 		&self.constants[idx]
 	}
 
@@ -106,7 +118,7 @@ impl<'source> Chunk<'source> {
 	}
 }
 
-impl<'source> Index<usize> for Chunk<'source> {
+impl<'source> Index<usize> for Chunk {
 	type Output = u8;
 
 	/// Fast indexing for the Chunk's bytecode.

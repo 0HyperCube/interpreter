@@ -24,7 +24,7 @@ opcode! {
 	u8,
 
 	/// The operation code, defining an operation in the bytecode.
-	#[derive(Debug)]
+	#[derive(Debug, PartialEq, Eq)]
 	pub enum Opcode {
 		0 => Return,
 
@@ -52,6 +52,14 @@ opcode! {
 
 		17 => DefineGlobalVariable,
 		18 => DefineLongGlobalVariable,
+		19 => GetGlobalVariable,
+		20 => GetLongGlobalVariable,
+		21 => SetGlobal,
+		22 => SetLongGlobal,
+		23 => GetLocal,
+		24 => GetLongLocal,
+		25 => SetLocal,
+		26 => SetLongLocal,
 	}
 }
 
@@ -86,6 +94,26 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 		offset + 4
 	}
 
+	/// Disassembles the short
+	fn short_value_instruction(chunk: &Chunk, opcode: Opcode, offset: usize) -> usize {
+		let value = chunk[offset + 1];
+		println!("{:<16} {value}", format!("{:?}", opcode));
+
+		offset + 2
+	}
+
+	/// Disassembles the long
+	fn long_value_instruction(chunk: &Chunk, opcode: Opcode, offset: usize) -> usize {
+		let mut value = 0;
+		for i in 0..3 {
+			value <<= 8;
+			value ^= chunk[offset + i + 1] as usize;
+		}
+		println!("{:<16} {value}", format!("{:?}", opcode));
+
+		offset + 4
+	}
+
 	// Log the byte number
 	trace!(target: "Disassembly", "{:0>4} ", offset);
 
@@ -106,8 +134,11 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 			offset + 1
 		}
 
-		Opcode::Constant => constant_instruction(chunk, opcode, offset),
-		Opcode::LongConstant => long_constant_instruction(chunk, opcode, offset),
+		Opcode::Constant | Opcode::DefineGlobalVariable | Opcode::GetGlobalVariable | Opcode::SetGlobal => constant_instruction(chunk, opcode, offset),
+		Opcode::LongConstant | Opcode::DefineLongGlobalVariable | Opcode::GetLongGlobalVariable | Opcode::SetLongGlobal => long_constant_instruction(chunk, opcode, offset),
+
+		Opcode::GetLocal | Opcode::SetLocal => short_value_instruction(chunk, opcode, offset),
+		Opcode::GetLongLocal | Opcode::SetLongLocal => long_value_instruction(chunk, opcode, offset),
 
 		_ => simple_instruction(opcode, offset),
 	}
