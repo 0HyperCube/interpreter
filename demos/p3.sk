@@ -1,0 +1,10 @@
+let number = 600851475143;
+let number = 13195;
+
+let check = sqrt(number);
+
+while check % number != 0 {
+	check = check - 1;
+}
+
+print(check)

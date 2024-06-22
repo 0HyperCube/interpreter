@@ -43,7 +43,7 @@ impl PartialEq for Value {
 /// Contains a seiries of bytecode instructions along with associated constants and [Line] numbers.
 #[derive(Default, Debug)]
 pub struct Chunk {
-	code: Vec<u8>,
+	pub code: Vec<u8>,
 	constants: Vec<Value>,
 	pub strings: Vec<ObjRef>,
 	pub objects: Vec<Box<ObjTy>>,

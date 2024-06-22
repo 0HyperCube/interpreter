@@ -1,0 +1,15 @@
+let a = 99;
+let largest = 0;
+while a > 9 {
+	let b = 99;
+	while b > 99 {
+		let result = a * b;
+		if result > largest {
+			largest = result;
+		}
+
+		b = b + 1;
+	}
+	a = a + 1;
+}
+print(largest);

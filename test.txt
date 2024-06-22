@@ -1,5 +1,0 @@
-out(3 + 4)
-
-while true {
-	out(4 + 5 / 2)
-}

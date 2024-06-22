@@ -2,7 +2,7 @@ mod parse_rules;
 mod precedence;
 pub mod scanner;
 
-use std::cell::Ref;
+use std::{cell::Ref, str::FromStr};
 
 use crate::bytecode::prelude::*;
 use parse_rules::*;
@@ -209,7 +209,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 	/// Parses a number with `str::parse`
 	fn number(&mut self, _can_assign: bool) {
 		if let Some(token) = &self.previous {
-			self.emit_constant(Value::Number(token.contents.parse().unwrap()));
+			self.emit_constant(Value::Number(FromStr::from_str(&token.contents.chars().filter(|&c| c != '_').collect::<String>()).unwrap()));
 		}
 	}
 	/// Parses a grouping `(5+5)`
@@ -239,6 +239,7 @@ impl<'a, 'source> Parser<'a, 'source> {
 				TokenType::Plus => self.emit_byte(Opcode::Add),
 				TokenType::Minus => self.emit_byte(Opcode::Subtract),
 				TokenType::Star => self.emit_byte(Opcode::Multiply),
+				TokenType::Percentage => self.emit_byte(Opcode::Modolo),
 				TokenType::Slash => self.emit_byte(Opcode::Divide),
 				TokenType::EqualsEquals => self.emit_byte(Opcode::Equal),
 				TokenType::Greater => self.emit_byte(Opcode::Greater),
@@ -248,6 +249,23 @@ impl<'a, 'source> Parser<'a, 'source> {
 				_ => unreachable!(),
 			}
 		}
+	}
+
+	/// Parses a short circuit and
+	fn and(&mut self, _can_assign: bool) {
+		let jump_start = self.emit_jump(Opcode::JumpIfFalse);
+		self.emit_byte(Opcode::Pop);
+		self.parse_precedence(Precedence::And);
+		self.patch_jump(jump_start);
+	}
+	/// Parses a short circuit or
+	fn or(&mut self, _can_assign: bool) {
+		let jump_start = self.emit_jump(Opcode::JumpIfFalse);
+		let jump_end = self.emit_jump(Opcode::Jump);
+		self.patch_jump(jump_start);
+		self.emit_byte(Opcode::Pop);
+		self.parse_precedence(Precedence::Or);
+		self.patch_jump(jump_end);
 	}
 	/// Parses literal like `true`, `false` or `null`
 	fn literal(&mut self, _can_assign: bool) {
@@ -310,6 +328,10 @@ impl<'a, 'source> Parser<'a, 'source> {
 	fn statement(&mut self) {
 		if self.matches(TokenType::Print) {
 			self.print_statement();
+		} else if self.matches(TokenType::If) {
+			self.if_statement();
+		} else if self.matches(TokenType::While) {
+			self.while_statement();
 		} else if self.matches(TokenType::LeftBrace) {
 			self.begin_scope();
 			self.block();
@@ -325,6 +347,77 @@ impl<'a, 'source> Parser<'a, 'source> {
 		}
 		self.consume(TokenType::RightBrace, "Blocks should end with '}'.");
 	}
+
+	fn if_statement(&mut self) {
+		self.expression();
+
+		let then_jump = self.emit_jump(Opcode::JumpIfFalse);
+		self.emit_byte(Opcode::Pop);
+
+		self.consume(TokenType::LeftBrace, "If statements must contain a block");
+		self.begin_scope();
+		self.block();
+		self.end_scope();
+
+		let else_jump = self.emit_jump(Opcode::Jump);
+
+		self.patch_jump(then_jump);
+		self.emit_byte(Opcode::Pop);
+
+		if self.matches(TokenType::Else) {
+			self.consume(TokenType::LeftBrace, "If statements must contain a block");
+			self.begin_scope();
+			self.block();
+			self.end_scope();
+		}
+
+		self.patch_jump(else_jump);
+	}
+
+	fn while_statement(&mut self) {
+		let loop_start = self.compiling_chunk.len();
+		self.expression();
+		let exit = self.emit_jump(Opcode::JumpIfFalse);
+		self.emit_byte(Opcode::Pop);
+
+		self.consume(TokenType::LeftBrace, "While statements must contain a block");
+		self.begin_scope();
+		self.block();
+		self.end_scope();
+
+		self.jump_back(loop_start);
+
+		self.patch_jump(exit);
+	}
+
+	/// The jump location is not specified and will be added later
+	fn emit_jump(&mut self, opcode: Opcode) -> usize {
+		self.emit_byte(opcode);
+		self.emit_bytes(u8::MAX, u8::MAX);
+		self.compiling_chunk.len() - 2
+	}
+
+	fn patch_jump(&mut self, start: usize) {
+		let jump = self.compiling_chunk.len() - start - 2;
+		if jump > u16::MAX as usize {
+			self.error_at_current("Jump too big");
+			return;
+		}
+		self.compiling_chunk.code[start] = (jump >> 8) as u8;
+		self.compiling_chunk.code[start + 1] = jump as u8;
+	}
+
+	fn jump_back(&mut self, to: usize) {
+		let jump = self.compiling_chunk.len() + 3 - to;
+		if jump > u16::MAX as usize {
+			self.error_at_current("Jump too big");
+			return;
+		}
+		self.emit_byte(Opcode::JumpBack);
+		self.emit_bytes((jump >> 8) as u8, jump as u8);
+	}
+
+	/// Add the jump length to a previous jump instruction
 
 	fn begin_scope(&mut self) {
 		self.compiler.depth += 1;

@@ -29,6 +29,8 @@ pub enum TokenType {
 	Slash,
 	/// *
 	Star,
+	/// %
+	Percentage,
 
 	// One or two characters
 	/// !
@@ -242,7 +244,7 @@ impl<'a> Scanner<'a> {
 	}
 	/// Consume a number literal in the user's source code wich is a sequence of digits optionally containing a decimal point
 	fn comsume_number(&mut self) -> Token<'a> {
-		while self.chars.peek1().filter(|c| c.is_ascii_digit()).is_some() {
+		while self.chars.peek1().filter(|c| c.is_ascii_digit() || *c == '_').is_some() {
 			self.advance();
 		}
 		if self.matches('.') && self.chars.peek2().filter(|c| c.is_ascii_digit()).is_some() {
@@ -283,6 +285,7 @@ impl<'a> Scanner<'a> {
 			b'l' => self.check_keyword(1, "et", TokenType::Let),
 			b'n' => self.check_keyword(1, "ull", TokenType::Null),
 			b'p' => self.check_keyword(1, "rint", TokenType::Print),
+			b'w' => self.check_keyword(1, "hile", TokenType::While),
 			_ => TokenType::Identifier,
 		};
 		info!("Token {:?}", token_type);
@@ -324,6 +327,7 @@ impl<'a> Scanner<'a> {
 			';' => self.new_token(TokenType::Semicolon),
 			'/' => self.new_token(TokenType::Slash),
 			'*' => self.new_token(TokenType::Star),
+			'%' => self.new_token(TokenType::Percentage),
 
 			'!' => {
 				let token_type = if self.matches('=') { TokenType::EscamationEquals } else { TokenType::Escamation };

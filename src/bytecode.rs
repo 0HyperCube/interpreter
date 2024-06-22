@@ -60,7 +60,7 @@ fn read_line() -> String {
 pub fn repl() {
 	let mut editor = rustyline::Editor::<()>::new();
 	editor.add_history_entry(r#"print("hello" + " " + "world");"#);
-	editor.add_history_entry(r#"{let x = 4;{let x = x;print(x);}}"#);
+	editor.add_history_entry(r#"if false{print("hi");}print("world");"#);
 	let mut runtime = Runtime::new(&Chunk::EMPTY);
 	let mut lines = Vec::new();
 	loop {

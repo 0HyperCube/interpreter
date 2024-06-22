@@ -60,7 +60,6 @@ impl<'source> Runtime {
 
 	/// Clear the stack and reset the stack top
 	pub fn reset_stack(&mut self) {
-		self.stack.clear();
 		self.stack_top = self.stack.as_mut_ptr();
 	}
 
@@ -86,11 +85,11 @@ impl<'source> Runtime {
 		}
 	}
 
-	pub fn read_u32(&mut self) -> u32 {
+	pub fn read_bytes(&mut self, n: u32) -> usize {
 		let mut value = 0;
-		for i in 0..3 {
+		for i in 0..n {
 			value <<= 8;
-			value ^= self.read_byte() as u32;
+			value ^= self.read_byte() as usize;
 		}
 		value
 	}
@@ -121,7 +120,7 @@ impl<'source> Runtime {
 	/// Read a long constant from the [Chunk].
 	#[inline]
 	pub fn long_constant<'s, 'v: 's>(&'s mut self) -> &'v Value {
-		unsafe { self.chunk.as_ref().unwrap() }.constant(self.read_u32() as usize)
+		unsafe { self.chunk.as_ref().unwrap() }.constant(self.read_bytes(3))
 	}
 
 	/// Find the current offset (in bytes) from the start of the chunk to the instruction pointer
@@ -192,7 +191,7 @@ impl<'source> Runtime {
 				let mut current = self.stack.as_ptr();
 
 				if current != self.stack_top {
-					info!(target: "Stack", "");
+					trace!(target: "Stack", "");
 					while current != self.stack_top {
 						unsafe {
 							print!("[ {:?} ]", *current);
@@ -269,6 +268,7 @@ impl<'source> Runtime {
 				Opcode::Subtract => binary_op!(- => Number),
 				Opcode::Multiply => binary_op!(* => Number),
 				Opcode::Divide => binary_op!(/ => Number),
+				Opcode::Modolo => binary_op!(% => Number),
 				Opcode::Null => self.push_stack(Value::Null),
 				Opcode::True => self.push_stack(Value::Bool(true)),
 				Opcode::False => self.push_stack(Value::Bool(false)),
@@ -306,7 +306,7 @@ impl<'source> Runtime {
 								}
 								Entry::Vacant(entry) => entry.insert(value),
 							};
-							info!("Glboals {name} val {value:?} {:?}", self.globals);
+							trace!("Globals {name} val {value:?} {:?}", self.globals);
 						}
 					}
 				}
@@ -314,7 +314,7 @@ impl<'source> Runtime {
 					if let Value::Obj(name) = (if opcode == Opcode::GetGlobalVariable { self.short_constant() } else { self.long_constant() }) {
 						if let Some(name) = name.as_ref::<String>() {
 							if let Some(value) = self.globals.get(name) {
-								info!("Glboals {name} val {value:?} {:?}", self.globals);
+								trace!("Globals {name} val {value:?} {:?}", self.globals);
 								self.push_stack(*value);
 							} else {
 								runtime_error!(self, "Undefined variable: {name}");
@@ -339,12 +339,30 @@ impl<'source> Runtime {
 					}
 				}
 				Opcode::SetLocal | Opcode::SetLongLocal => {
-					let slot = if opcode == Opcode::SetLocal { self.read_byte() as usize } else { self.read_u32() as usize };
+					let slot = if opcode == Opcode::SetLocal { self.read_byte() as usize } else { self.read_bytes(3) };
 					self.set_stack(slot, self.peep_stack(0).clone());
 				}
 				Opcode::GetLocal | Opcode::GetLongLocal => {
-					let slot = if opcode == Opcode::GetLocal { self.read_byte() as usize } else { self.read_u32() as usize };
+					let slot = if opcode == Opcode::GetLocal { self.read_byte() as usize } else { self.read_bytes(3) };
 					self.push_stack(self.peep_bottom_stack(slot).clone());
+				}
+				Opcode::Jump => {
+					let offset = self.read_bytes(2);
+					self.ip = unsafe { self.ip.add(offset as usize) };
+				}
+				Opcode::JumpIfFalse => {
+					let offset = self.read_bytes(2);
+					let Value::Bool(x) = self.peep_stack(0) else {
+						runtime_error!(self, "Value must be a boolean");
+						continue;
+					};
+					if !x {
+						self.ip = unsafe { self.ip.add(offset as usize) };
+					}
+				}
+				Opcode::JumpBack => {
+					let offset = self.read_bytes(2);
+					self.ip = unsafe { self.ip.sub(offset as usize) };
 				}
 			}
 		}

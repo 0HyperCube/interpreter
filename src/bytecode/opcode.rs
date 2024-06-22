@@ -38,6 +38,7 @@ opcode! {
 		6 => Multiply,
 		7 => Divide,
 
+
 		8 => Null,
 		9 => True,
 		10 => False,
@@ -60,6 +61,12 @@ opcode! {
 		24 => GetLongLocal,
 		25 => SetLocal,
 		26 => SetLongLocal,
+
+		27 => Jump,
+		28 => JumpIfFalse,
+		29=> JumpBack,
+
+		30 => Modolo,
 	}
 }
 
@@ -94,24 +101,16 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 		offset + 4
 	}
 
-	/// Disassembles the short
-	fn short_value_instruction(chunk: &Chunk, opcode: Opcode, offset: usize) -> usize {
-		let value = chunk[offset + 1];
-		println!("{:<16} {value}", format!("{:?}", opcode));
-
-		offset + 2
-	}
-
 	/// Disassembles the long
-	fn long_value_instruction(chunk: &Chunk, opcode: Opcode, offset: usize) -> usize {
+	fn value_instruction(chunk: &Chunk, opcode: Opcode, offset: usize, length: usize) -> usize {
 		let mut value = 0;
-		for i in 0..3 {
+		for i in 0..length {
 			value <<= 8;
 			value ^= chunk[offset + i + 1] as usize;
 		}
 		println!("{:<16} {value}", format!("{:?}", opcode));
 
-		offset + 4
+		offset + 1 + length
 	}
 
 	// Log the byte number
@@ -137,8 +136,9 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
 		Opcode::Constant | Opcode::DefineGlobalVariable | Opcode::GetGlobalVariable | Opcode::SetGlobal => constant_instruction(chunk, opcode, offset),
 		Opcode::LongConstant | Opcode::DefineLongGlobalVariable | Opcode::GetLongGlobalVariable | Opcode::SetLongGlobal => long_constant_instruction(chunk, opcode, offset),
 
-		Opcode::GetLocal | Opcode::SetLocal => short_value_instruction(chunk, opcode, offset),
-		Opcode::GetLongLocal | Opcode::SetLongLocal => long_value_instruction(chunk, opcode, offset),
+		Opcode::GetLocal | Opcode::SetLocal => value_instruction(chunk, opcode, offset, 1),
+		Opcode::GetLongLocal | Opcode::SetLongLocal => value_instruction(chunk, opcode, offset, 3),
+		Opcode::Jump | Opcode::JumpIfFalse | Opcode::JumpBack => value_instruction(chunk, opcode, offset, 2),
 
 		_ => simple_instruction(opcode, offset),
 	}
